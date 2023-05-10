@@ -16,8 +16,12 @@ Godeps/
 .idea/
 .vscode/
 
-# Specific directories
+# Specific directories & files
 res/models/*.obj
+res/fonts/*.ttf
+res/audio/*.flac
+godegraph.png
+internal/engine/logger/*
 
 # Binary files
 /bin/

@@ -26,24 +26,36 @@ func NewEntity(model *Model, position, scale mgl32.Vec3, rotation mgl32.Quat) *E
 	}
 }
 
+var loaderMutex sync.Mutex
+
 func LoadModelFromFile(filePath string) (*Model, error) {
+	loaderMutex.Lock()
+
 	var vertices []float32
 	var indices []uint32
+	var texIndices []uint32
+	var normalIndices []uint32
 	var texcoords []float32
 	var normals []float32
 
-	fmt.Println("Attempting to read object file!")
+	// Create a mutex for each slice
+	var (
+		verticesMutex  sync.Mutex
+		indicesMutex   sync.Mutex
+		texcoordsMutex sync.Mutex
+		normalsMutex   sync.Mutex
+	)
 
 	file, err := os.OpenFile(filePath, os.O_RDONLY, 0600)
 	if err != nil {
 		return nil, err
-	} else {
-		fmt.Println("Successfully opened object file")
 	}
-	defer file.Close()
-
-	// Create a mutex to synchronize access to the slices
-	var mutex sync.Mutex
+	defer func(file *os.File) {
+		err := file.Close()
+		if err != nil {
+			fmt.Printf("Could not close object file: %s\n", err)
+		}
+	}(file)
 
 	scanner := bufio.NewScanner(file)
 	lineCh := make(chan string)
@@ -76,81 +88,75 @@ func LoadModelFromFile(filePath string) (*Model, error) {
 
 			// Process lines
 			if strings.HasPrefix(line, "v ") {
+				verticesMutex.Lock()
+
 				// split line into tokens
 				tokens := strings.Fields(line)
 
 				// convert tokens to floats
-				x, _ := strconv.ParseFloat(tokens[1], 64)
-				y, _ := strconv.ParseFloat(tokens[2], 64)
-				z, _ := strconv.ParseFloat(tokens[3], 64)
+				x, _ := strconv.ParseFloat(tokens[1], 32)
+				y, _ := strconv.ParseFloat(tokens[2], 32)
+				z, _ := strconv.ParseFloat(tokens[3], 32)
 
 				// create a new vertex and add to model vertex array
-				mutex.Lock()
-				vertices = append(vertices, float32(x), float32(y), float32(z))
-				fmt.Println("Added vertices: ")
-				mutex.Unlock()
+				vertices = append(TriangulateVertices(vertices), float32(x), float32(-y), float32(z))
+				verticesMutex.Unlock()
 			} else if strings.HasPrefix(line, "vt ") {
+				texcoordsMutex.Lock()
+
 				tokens := strings.Fields(line)
 
-				u, _ := strconv.ParseFloat(tokens[1], 64)
-				v, _ := strconv.ParseFloat(tokens[2], 64)
+				_u, _ := strconv.ParseFloat(tokens[1], 32)
+				v, _ := strconv.ParseFloat(tokens[2], 32)
 
-				mutex.Lock()
-				texcoords = append(texcoords, float32(u), float32(v))
-				fmt.Println("Added vertex textures")
-				mutex.Unlock()
+				texcoords = append(texcoords, float32(_u), float32(v))
+				texcoordsMutex.Unlock()
 			} else if strings.HasPrefix(line, "vn ") {
+				normalsMutex.Lock()
+
 				tokens := strings.Fields(line)
 
-				x, _ := strconv.ParseFloat(tokens[1], 64)
-				y, _ := strconv.ParseFloat(tokens[2], 64)
-				z, _ := strconv.ParseFloat(tokens[3], 64)
+				x, _ := strconv.ParseFloat(tokens[1], 32)
+				y, _ := strconv.ParseFloat(tokens[2], 32)
+				z, _ := strconv.ParseFloat(tokens[3], 32)
 
-				mutex.Lock()
 				normals = append(normals, float32(x), float32(y), float32(z))
-				fmt.Println("Added vertex normals")
-				mutex.Unlock()
+				normalsMutex.Unlock()
 			} else if strings.HasPrefix(line, "f ") {
 				tokens := strings.Fields(line)
 
 				for i := 1; i < len(tokens); i++ {
+					indicesMutex.Lock()
+
 					vertexData := strings.Split(tokens[i], "/")
 
+					// Extract vertex index, texture coordinate index, and normal vector index
 					vertexIndex, _ := strconv.Atoi(vertexData[0])
-					//textureIndex, _ := strconv.Atoi(vertexData[1])
-					//normalIndex, _ := strconv.Atoi(vertexData[2])
+					textureIndex, _ := strconv.Atoi(vertexData[1])
+					normalIndex, _ := strconv.Atoi(vertexData[2])
 
 					// Subtract 1 from each index value to convert from 1-based to 0-based indexing
-					mutex.Lock()
 					indices = append(indices, uint32(vertexIndex-1))
-					fmt.Println("Added vertex index data")
-					mutex.Unlock()
+					texIndices = append(texIndices, uint32(textureIndex-1))
+					normalIndices = append(normalIndices, uint32(normalIndex-1))
+					indicesMutex.Unlock()
 				}
 			}
-
-			fmt.Println("AHHH")
 
 			wg.Done()
 			workerCh <- struct{}{}
 		}(line)
 	}
 
-	fmt.Println("AHHH2")
-
 	wg.Wait()
-	fmt.Println("AHHH3")
 
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
-	fmt.Println("AHHH4")
 
-	// Create the model
-	// TODO: implement normals and texture normals
-	fmt.Println("vert: ", vertices, "ind:", indices)
+	model := NewModel(vertices, indices, normals, normalIndices, texIndices, texcoords)
 
-	model := NewModel(vertices, indices)
-	fmt.Println("model vert: ", model.Vertices, "model ind:", model.Indices)
+	defer loaderMutex.Unlock()
 
 	return model, nil
 }
@@ -186,4 +192,13 @@ func (e *Entity) Update(deltaTime float32) {
 	e.position = e.position.Add(mgl32.Vec3{0.0, 0.0, 1.0}.Mul(deltaTime))
 	e.rotation = e.rotation.Mul(mgl32.QuatRotate(deltaTime, mgl32.Vec3{0.0, 1.0, 0.0}))
 	e.scale = e.scale.Add(mgl32.Vec3{0.1, 0.1, 0.1}.Mul(deltaTime))
+}
+
+func TriangulateVertices(vertices []float32) []float32 {
+	// Triangulate *.obj mesh. I have no idea if it works or not, but it gets angry if I don't use it. :O
+	triangulatedVertices := make([]float32, 0)
+	for i := 0; i < len(vertices); i += 3 {
+		triangulatedVertices = append(triangulatedVertices, vertices[i], vertices[i+1], vertices[i+2])
+	}
+	return triangulatedVertices
 }

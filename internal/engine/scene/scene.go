@@ -1,6 +1,9 @@
 package scene
 
-import "github.com/UpsilonDiesBackwards/minerva/internal/engine/renderer"
+import (
+	"github.com/UpsilonDiesBackwards/minerva/internal/engine/renderer"
+	"github.com/UpsilonDiesBackwards/minerva/internal/engine/window"
+)
 
 type Scene struct {
 	entities []*renderer.Entity
@@ -22,6 +25,6 @@ func (s *Scene) Update(deltaTime float32) {
 	}
 }
 
-func (s *Scene) Draw(renderer *renderer.Renderer) {
-	renderer.Draw(s.entities)
+func (s *Scene) Draw(renderer *renderer.Renderer, win *window.Window) {
+	renderer.Draw(s.entities, win)
 }

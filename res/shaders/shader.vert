@@ -7,9 +7,9 @@ layout(location = 0) in vec3 vp;
 layout(binding = 1) uniform PerspectiveBlock {
     mat4 project;
     mat4 camera;
-    mat4 world;
+    mat4 model;
 };
 
 void main() {
-    gl_Position = project * camera * world * vec4(vp, 1);
+    gl_Position = project * camera * model * vec4(vp, 1);
 }
